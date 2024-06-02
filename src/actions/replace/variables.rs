@@ -1,268 +1,259 @@
 use crate::scoping::regex::CaptureGroup;
-use std::{collections::HashMap, error::Error, fmt, ops::Range};
+use log::trace;
+use std::{collections::HashMap, error::Error, fmt};
 
-/// Mapping variables (which are named or numbered) to their (potentially multiple)
-/// position(s) in an input variable expression.
-pub(super) type VariablePositions = HashMap<CaptureGroup, Vec<Range<usize>>>;
+type Variables<'a> = HashMap<CaptureGroup, &'a str>;
 
-/// In an input like `Hello $var World`, find the positions of variables.
+/// In an input like `Hello $var World`, inject all variables.
 ///
 /// Variables are treated as they occur in regular expressions: they can be [named or
 /// numbered](https://docs.rs/regex/latest/regex/struct.Captures.html).
 #[allow(clippy::too_many_lines)] // :(
 pub(super) fn inject_variables(
     input: &str,
-    variables: HashMap<CaptureGroup, &str>,
+    variables: &Variables,
 ) -> Result<String, VariableExpressionError> {
-    // let mut variables = VariablePositions::default();
-    let mut state = State::Noop;
+    let mut state = State::default();
     let mut out = String::with_capacity(input.len());
+    let mut to_remove = 0; // Remove this many pushed chars once a var is detected
 
-    for (i, c) in input.chars().enumerate() {
+    for c in input.chars() {
+        trace!(
+            "Injecting variables. Current output is: '{}', current state is {:?}",
+            out.escape_debug(),
+            state
+        );
+        out.push(c);
+
         state = match (state, c) {
             // Initial state
-            (State::Noop | State::WindUpBraces(_), '$') => State::MaybeVariableStart,
-            (State::Noop, _) => State::Noop,
+            (State::Noop, '$') => {
+                to_remove = 1;
+                State::Start
+            }
+            (State::Start, '$') => {
+                // Ignore previous `$`, and only push one.
+                assert_eq!(out.pop().expect("was pushed in earlier loop"), '$',);
+                State::default()
+            }
+            (State::Noop, _) => State::default(),
 
             // Init
-            (State::MaybeVariableStart, '{') => State::WindUpBraces(1),
-            (State::WindUpBraces(n), '{') => State::WindUpBraces(n + 1),
-            (State::MaybeVariableStart, 'a'..='z' | 'A'..='Z' | '_') => {
-                State::BuildingNamedVariable {
-                    name: String::from(c),
-                    start: i - '$'.len_utf8(),
-                    n_braces: 0,
-                }
+            (State::Start, '{') => {
+                to_remove += 1;
+                State::BracedStart
             }
-            (State::WindUpBraces(n), 'a'..='z' | 'A'..='Z' | '_') => State::BuildingNamedVariable {
+            (State::Start, 'a'..='z' | 'A'..='Z' | '_') => State::BuildingNamedVar {
                 name: String::from(c),
-                start: i - ('$'.len_utf8() + '{'.len_utf8() * n),
-                n_braces: n,
+                braced: false,
             },
-            (State::MaybeVariableStart, '0'..='9') => State::BuildingNumberedVariable {
-                magnitude: c.to_digit(10).expect("hard-coded digit is valid number") as usize,
-                start: i - '$'.len_utf8(),
-                n_braces: 0,
+            (State::BracedStart, 'a'..='z' | 'A'..='Z' | '_') => State::BuildingNamedVar {
+                name: String::from(c),
+                braced: true,
             },
-            (State::WindUpBraces(n), '0'..='9') => State::BuildingNumberedVariable {
-                magnitude: c.to_digit(10).expect("hard-coded digit is valid number") as usize,
-                start: i - ('$'.len_utf8() + '{'.len_utf8() * n),
-                n_braces: n,
+            (State::Start, '0'..='9') => State::BuildingNumberedVar {
+                num: c.to_digit(10).expect("hard-coded digit is valid number") as usize,
+                braced: false,
+            },
+            (State::BracedStart, '0'..='9') => State::BuildingNumberedVar {
+                num: c.to_digit(10).expect("hard-coded digit is valid number") as usize,
+                braced: true,
             },
 
-            // Nothing useful matched, go back. Matches `$` as well, allowing escaping.
-            // This is order-dependent, see also
+            // Nothing useful matched, go back. This is order-dependent, see also
             // https://github.com/rust-lang/rust-clippy/issues/860
             #[allow(clippy::match_same_arms)]
-            (State::MaybeVariableStart | State::WindUpBraces(_), _) => State::Noop,
+            (State::Start | State::BracedStart, _) => State::Noop,
 
             // Building up
             (
-                State::BuildingNamedVariable {
-                    mut name,
-                    start,
-                    n_braces,
-                },
+                State::BuildingNamedVar { mut name, braced },
                 'a'..='z' | 'A'..='Z' | '_' | '0'..='9',
-            ) => State::BuildingNamedVariable {
+            ) => State::BuildingNamedVar {
                 name: {
                     name.push(c);
                     name
                 },
-                start,
-                n_braces,
+                braced,
             },
             (
-                State::BuildingNumberedVariable {
-                    magnitude,
-                    start,
-                    n_braces,
+                State::BuildingNumberedVar {
+                    num: magnitude,
+                    braced,
                 },
                 '0'..='9',
-            ) => State::BuildingNumberedVariable {
-                magnitude: {
+            ) => State::BuildingNumberedVar {
+                num: {
                     magnitude * 10
                         + c.to_digit(10).expect("hard-coded digit is valid number") as usize
                 },
-                start,
-                n_braces,
+                braced,
             },
 
             // Building stops
+            (State::BuildingNamedVar { name, braced: true }, '}') => {
+                to_remove += 1;
+
+                State::FinishNamedVar(name)
+            }
+            (State::BuildingNumberedVar { num, braced: true }, '}') => {
+                to_remove += 1;
+
+                State::FinishNumberedVar(num)
+            }
             (
-                State::BuildingNamedVariable {
-                    name,
-                    start,
-                    n_braces: 0,
-                }
-                | State::WindDownNamedVariable {
-                    name,
-                    start,
-                    n_braces: 0,
+                State::BuildingNamedVar {
+                    name, braced: true, ..
                 },
                 _,
-            ) => {
-                let range = start..i;
-                variables
-                    .entry(CaptureGroup::Named(name))
-                    .and_modify(|ranges| ranges.push(range.clone()))
-                    .or_insert(vec![range]);
+            ) => return Err(VariableExpressionError::MismatchedBraces(name)),
+            (
+                State::BuildingNumberedVar {
+                    num, braced: true, ..
+                },
+                _,
+            ) => return Err(VariableExpressionError::MismatchedBraces(num.to_string())),
+
+            (State::FinishNamedVar(name) | State::BuildingNamedVar { name, .. }, _) => {
+                trace!("Finishing up named variable '{name}'");
+                match variables.get(&CaptureGroup::Named(name.clone())) {
+                    Some(repl) => {
+                        let tail = out
+                            .pop()
+                            .expect("chars are pushed unconditionally, one is present");
+                        out.truncate(out.len() - (to_remove + name.len()));
+                        out.push_str(repl);
+                        out.push(tail);
+                    }
+                    None => return Err(VariableExpressionError::UndefinedVariable(name)),
+                };
 
                 match c {
-                    '$' => State::MaybeVariableStart,
+                    '$' => {
+                        to_remove = 1;
+                        State::Start
+                    }
                     _ => State::Noop,
                 }
             }
-
-            (
-                State::BuildingNamedVariable {
-                    name,
-                    start,
-                    n_braces,
-                }
-                | State::WindDownNamedVariable {
-                    name,
-                    start,
-                    n_braces,
-                },
-                _,
-            ) => match c {
-                '}' => State::WindDownNamedVariable {
-                    name,
-                    start,
-                    n_braces: n_braces - 1,
-                },
-                _ => return Err(VariableExpressionError::MismatchedBraces(input.to_owned())),
-            },
-
-            (
-                State::BuildingNumberedVariable {
-                    magnitude,
-                    start,
-                    n_braces: 0,
-                }
-                | State::WindDownNumberedVariable {
-                    magnitude,
-                    start,
-                    n_braces: 0,
-                },
-                _,
-            ) => {
-                let range = start..i;
-                variables
-                    .entry(CaptureGroup::Numbered(magnitude))
-                    .and_modify(|ranges| ranges.push(range.clone()))
-                    .or_insert(vec![range]);
+            (State::FinishNumberedVar(num) | State::BuildingNumberedVar { num, .. }, _) => {
+                trace!("Finishing up numbered variable '{num}'");
+                match variables.get(&CaptureGroup::Numbered(num)) {
+                    Some(repl) => {
+                        let tail = out
+                            .pop()
+                            .expect("chars are pushed unconditionally, one is present");
+                        out.truncate(out.len() - (to_remove + width(num)));
+                        out.push_str(repl);
+                        out.push(tail);
+                    }
+                    None => {
+                        return Err(VariableExpressionError::UndefinedVariable(num.to_string()))
+                    }
+                };
 
                 match c {
-                    '$' => State::MaybeVariableStart,
+                    '$' => {
+                        to_remove = 1;
+                        State::Start
+                    }
                     _ => State::Noop,
                 }
             }
-
-            (
-                State::BuildingNumberedVariable {
-                    magnitude,
-                    start,
-                    n_braces,
-                }
-                | State::WindDownNumberedVariable {
-                    magnitude,
-                    start,
-                    n_braces,
-                },
-                _,
-            ) => match c {
-                '}' => State::WindDownNumberedVariable {
-                    magnitude,
-                    start,
-                    n_braces: n_braces - 1,
-                },
-                _ => return Err(VariableExpressionError::MismatchedBraces(input.to_owned())),
-            },
         }
     }
 
+    trace!(
+        "Finished character iteration, output is '{}', state is {:?}",
+        out.escape_debug(),
+        state
+    );
+
     // Flush out any pending state
-    match state {
-        State::BuildingNamedVariable {
-            name,
-            start,
-            n_braces: 0,
+    let last = out.chars().last();
+    state = match (&state, last) {
+        (
+            State::FinishNamedVar(name)
+            | State::BuildingNamedVar {
+                name,
+                braced: false,
+            },
+            _,
+        ) => {
+            trace!("Finishing up named variable '{name}'");
+            match variables.get(&CaptureGroup::Named(name.clone())) {
+                Some(repl) => {
+                    out.truncate(out.len() - (to_remove + name.len()));
+                    out.push_str(repl);
+
+                    state
+                }
+                None => return Err(VariableExpressionError::UndefinedVariable(name.clone())),
+            }
         }
-        | State::WindDownNamedVariable {
-            name,
-            start,
-            n_braces: 0,
-        } => {
-            let range = start..input.len();
-            variables
-                .entry(CaptureGroup::Named(name))
-                .and_modify(|ranges| ranges.push(range.clone()))
-                .or_insert(vec![range]);
+        (State::FinishNumberedVar(num) | State::BuildingNumberedVar { num, braced: false }, _) => {
+            trace!("Finishing up numbered variable '{num}'");
+            match variables.get(&CaptureGroup::Numbered(*num)) {
+                Some(repl) => {
+                    out.truncate(out.len() - (to_remove + width(*num)));
+                    out.push_str(repl);
+
+                    state
+                }
+                None => return Err(VariableExpressionError::UndefinedVariable(num.to_string())),
+            }
         }
-        State::BuildingNumberedVariable {
-            magnitude,
-            start,
-            n_braces: 0,
-        }
-        | State::WindDownNumberedVariable {
-            magnitude,
-            start,
-            n_braces: 0,
-        } => {
-            let range = start..input.len();
-            variables
-                .entry(CaptureGroup::Numbered(magnitude))
-                .and_modify(|ranges| ranges.push(range.clone()))
-                .or_insert(vec![range]);
-        }
-        State::BuildingNamedVariable { .. }
-        | State::WindDownNamedVariable { .. }
-        | State::BuildingNumberedVariable { .. }
-        | State::WindDownNumberedVariable { .. } => {
-            return Err(VariableExpressionError::MismatchedBraces(input.to_owned()))
-        }
-        _ => (),
+        (
+            State::BuildingNamedVar {
+                name, braced: true, ..
+            },
+            _,
+        ) => return Err(VariableExpressionError::MismatchedBraces(name.clone())),
+        (
+            State::BuildingNumberedVar {
+                num, braced: true, ..
+            },
+            _,
+        ) => return Err(VariableExpressionError::MismatchedBraces(num.to_string())),
+        (State::Noop | State::Start | State::BracedStart, _) => state,
     };
 
-    Ok(variables)
+    trace!(
+        "Done injecting variables, final output is '{}', final state is {:?}",
+        out.escape_debug(),
+        state
+    );
+
+    Ok(out)
 }
 
-/// State during extraction of variables in an expression like `Hello $var World`.
+/// Gets the width in characters of a number.
+fn width(num: usize) -> usize {
+    if num == 0 {
+        1
+    } else {
+        (num.ilog10() + 1) as usize
+    }
+}
+
+/// State during injection of variables in an expression like `Hello $var World`.
+#[derive(Debug, PartialEq, Eq, Default)]
 enum State {
-    /// The character initiating a variable declaration has been seen.
-    MaybeVariableStart,
-    /// A variable declaration is being built up, where the variable is surrounded by
-    /// braces.
-    WindUpBraces(usize),
-    /// A named variable is detected and is being built up.
-    BuildingNamedVariable {
-        name: String,
-        start: usize,
-        n_braces: usize,
-    },
-    /// A numbered variable is detected and is being built up.
-    BuildingNumberedVariable {
-        magnitude: usize,
-        start: usize,
-        n_braces: usize,
-    },
-    /// A named variable was processed, and processing is now safely being wrapped up.
-    WindDownNamedVariable {
-        name: String,
-        start: usize,
-        n_braces: usize,
-    },
-    /// A numbered variable was processed, and processing is now safely being wrapped
-    /// up.
-    WindDownNumberedVariable {
-        magnitude: usize,
-        start: usize,
-        n_braces: usize,
-    },
-    /// Start and neutral state.
+    #[default]
+    /// Neutral state.
     Noop,
+    /// The character denoting a variable declaration has been seen.
+    Start,
+    /// The detected, potential variable additionally starts with an opening brace.
+    BracedStart,
+    /// A named variable is detected and is being built up.
+    BuildingNamedVar { name: String, braced: bool },
+    /// A numbered variable is detected and is being built up.
+    BuildingNumberedVar { num: usize, braced: bool },
+    /// Processing of a named variable is done, finish it up.
+    FinishNamedVar(String),
+    /// Processing of a numbered variable is done, finish it up.
+    FinishNumberedVar(usize),
 }
 
 /// An error in variable expressions.
@@ -270,13 +261,18 @@ enum State {
 pub enum VariableExpressionError {
     /// A variable expression with mismatched number of braces.
     MismatchedBraces(String),
+    /// A requested variable was not passed.
+    UndefinedVariable(String),
 }
 
 impl fmt::Display for VariableExpressionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MismatchedBraces(expression) => {
-                write!(f, "Contains an imbalanced set of braces: '{expression}'")
+            Self::MismatchedBraces(var) => {
+                write!(f, "Mismatched braces for variable: '{var}'")
+            }
+            Self::UndefinedVariable(var) => {
+                write!(f, "Undefined variable, unable to substitute: '{var}'")
             }
         }
     }
@@ -284,84 +280,101 @@ impl fmt::Display for VariableExpressionError {
 
 impl Error for VariableExpressionError {}
 
-#[cfg(never)]
-#[allow(clippy::single_range_in_vec_init)]
+#[cfg(test)]
 mod test {
     use super::*;
     use rstest::*;
 
+    #[fixture]
+    fn variables() -> Variables<'static> {
+        Variables::from([
+            (CaptureGroup::Named("var1".to_owned()), "val1"),
+            (CaptureGroup::Named("VAR_2".to_owned()), "val2"),
+            (CaptureGroup::Numbered(2), "nval"),
+        ])
+    }
+
     #[rstest]
-    // No variables
-    #[case("", Ok(VariablePositions::default()))]
-    #[case("Regular content", Ok(VariablePositions::default()))]
-    #[case("$", Ok(VariablePositions::default()))]
-    #[case("$$", Ok(VariablePositions::default()))]
-    #[case("$$$", Ok(VariablePositions::default()))]
+    // Base cases without variables
+    #[case("", Ok(""))]
+    #[case("Regular content", Ok("Regular content"))]
+    // Escaping works
+    #[case("I have $$5", Ok("I have $5"))]
     //
-    // Basic, named
-    #[case("$var", Ok(VariablePositions::from([(CaptureGroup::Named("var".into()), vec![0..4])])))]
-    #[case(" $var", Ok(VariablePositions::from([(CaptureGroup::Named("var".into()), vec![1..5])])))]
-    #[case("$var ", Ok(VariablePositions::from([(CaptureGroup::Named("var".into()), vec![0..4])])))]
-    // Named are allowed to contain various extra characters
-    #[case("$var1", Ok(VariablePositions::from([(CaptureGroup::Named("var1".into()), vec![0..5])])))]
-    #[case("$var_1337_wow", Ok(VariablePositions::from([(CaptureGroup::Named("var_1337_wow".into()), vec![0..13])])))]
-    #[case("$1var", Ok(VariablePositions::from([(CaptureGroup::Numbered(1), vec![0..2])])))]
+    // Basic named variable
+    #[case("$var1", Ok("val1"))]
+    #[case("$var1 ", Ok("val1 "))]
+    #[case(" $var1", Ok(" val1"))]
+    #[case(" $var1 ", Ok(" val1 "))]
     //
-    // Uppercase
-    #[case("$VAR", Ok(VariablePositions::from([(CaptureGroup::Named("VAR".into()), vec![0..4])])))]
+    // Basic named variables
+    #[case("$var1 $VAR_2", Ok("val1 val2"))]
+    #[case("$var1$VAR_2", Ok("val1val2"))]
+    #[case(" $var1 $VAR_2", Ok(" val1 val2"))]
+    #[case("$var1 $VAR_2 ", Ok("val1 val2 "))]
+    #[case(" $var1 $VAR_2 ", Ok(" val1 val2 "))]
     //
-    // Braces
-    #[case("${0}", Ok(VariablePositions::from([(CaptureGroup::Numbered(0), vec![0..4])])))]
-    #[case("${var}", Ok(VariablePositions::from([(CaptureGroup::Named("var".into()), vec![0..6])])))]
-    #[case("${{var}}", Ok(VariablePositions::from([(CaptureGroup::Named("var".into()), vec![0..8])])))]
-    // Excess closing braces are fine
-    #[case("${var}}", Ok(VariablePositions::from([(CaptureGroup::Named("var".into()), vec![0..6])])))]
-    // Insufficient closing braces aren't fine
-    #[case("${{var}", Err(VariableExpressionError::MismatchedBraces("${{var}".into())))]
-    #[case("${var", Err(VariableExpressionError::MismatchedBraces("${var".into())))]
-    #[case("$var}", Ok(VariablePositions::from([(CaptureGroup::Named("var".into()), vec![0..4])])))]
+    // Basic numbered variables
+    #[case("$2", Ok("nval"))]
+    #[case("$2 ", Ok("nval "))]
+    #[case(" $2", Ok(" nval"))]
+    #[case(" $2 ", Ok(" nval "))]
     //
     // Mixed content
-    #[case("Mixed $var content", Ok(VariablePositions::from([(CaptureGroup::Named("var".into()), vec![6..10])])))]
-    #[case("Mixed$varcontent", Ok(VariablePositions::from([(CaptureGroup::Named("varcontent".into()), vec![5..16])])))]
-    #[case("Mixed${var}content", Ok(VariablePositions::from([(CaptureGroup::Named("var".into()), vec![5..11])])))]
-    #[case("Mixed${{var}}content", Ok(VariablePositions::from([(CaptureGroup::Named("var".into()), vec![5..13])])))]
+    #[case("Hello $2 World $var1", Ok("Hello nval World val1"))]
     //
-    // Basic, numbered
-    #[case("$0", Ok(VariablePositions::from([(CaptureGroup::Numbered(0), vec![0..2])])))]
-    #[case("$1", Ok(VariablePositions::from([(CaptureGroup::Numbered(1), vec![0..2])])))]
-    #[case("$9999", Ok(VariablePositions::from([(CaptureGroup::Numbered(9999), vec![0..5])])))]
-    #[case("$-1", Ok(VariablePositions::default()))]
-    // Numbered cannot contain letters
-    #[case("$0hello", Ok(VariablePositions::from([(CaptureGroup::Numbered(0), vec![0..2])])))]
-    #[case("${0}hello", Ok(VariablePositions::from([(CaptureGroup::Numbered(0), vec![0..4])])))]
+    // Braces for separation
+    #[case("${var1}", Ok("val1"))]
+    #[case("X${var1}X", Ok("Xval1X"))]
+    #[case("${2}", Ok("nval"))]
+    #[case("3${2}3", Ok("3nval3"))]
+    #[case("Hello${2}2U Sir${var1}Mister", Ok("Hellonval2U Sirval1Mister"))]
     //
-    // Multiple variables, spaced out
-    #[case("$var $var", Ok(VariablePositions::from([(CaptureGroup::Named("var".into()), vec![0..4, 5..9])])))]
-    #[case("$var $0 $var", Ok(VariablePositions::from([(CaptureGroup::Named("var".into()), vec![0..4, 8..12]), (CaptureGroup::Numbered(0), vec![5..7])])))]
+    // Variable multiple times
+    #[case("$var1$var1", Ok("val1val1"))]
+    #[case("${var1}${var1}", Ok("val1val1"))]
+    #[case("${var1}$var1", Ok("val1val1"))]
+    #[case("${2}$2", Ok("nvalnval"))]
+    #[case("${var1}$var1 ${2}$2", Ok("val1val1 nvalnval"))]
     //
-    // Multiple variables, back to back
-    #[case("$var1$var2", Ok(VariablePositions::from([(CaptureGroup::Named("var1".into()), vec![0..5]), (CaptureGroup::Named("var2".into()), vec![5..10])])))]
-    #[case("${var1}${var2}", Ok(VariablePositions::from([(CaptureGroup::Named("var1".into()), vec![0..7]), (CaptureGroup::Named("var2".into()), vec![7..14])])))]
-    #[case("$0$1", Ok(VariablePositions::from([(CaptureGroup::Numbered(0), vec![0..2]), (CaptureGroup::Numbered(1), vec![2..4])])))]
-    #[case("${0}${1}", Ok(VariablePositions::from([(CaptureGroup::Numbered(0), vec![0..4]), (CaptureGroup::Numbered(1), vec![4..8])])))]
+    // Undefined variables
+    #[case("$NO", Err(VariableExpressionError::UndefinedVariable("NO".to_owned())))]
+    #[case("$NO such thing", Err(VariableExpressionError::UndefinedVariable("NO".to_owned())))]
+    #[case("$NO$ON", Err(VariableExpressionError::UndefinedVariable("NO".to_owned())))]
+    // Numbers will be stringified
+    #[case("$1337", Err(VariableExpressionError::UndefinedVariable("1337".to_owned())))]
+    #[case("$1337 is missing", Err(VariableExpressionError::UndefinedVariable("1337".to_owned())))]
+    #[case("$1337$7331", Err(VariableExpressionError::UndefinedVariable("1337".to_owned())))]
     //
-    // End-to-end
-    #[case("A long $0 example $TEST!", Ok(VariablePositions::from([(CaptureGroup::Numbered(0), vec![7..9]), (CaptureGroup::Named("TEST".into()), vec![18..23])])))]
+    // Improperly closed braces
+    #[case("${var1", Err(VariableExpressionError::MismatchedBraces("var1".to_owned())))]
+    #[case("${var1 woops", Err(VariableExpressionError::MismatchedBraces("var1".to_owned())))]
+    // Excess trailing ones are fine tho
+    #[case("${var1}}", Ok("val1}"))]
     //
-    // Non-ASCII
-    #[case("$🦀", Ok(VariablePositions::default()))]
-    //
-    // Escaping is possible
-    #[case("$$notavar", Ok(VariablePositions::default()))]
-    #[case("$$$avar", Ok(VariablePositions::from([(CaptureGroup::Named("avar".into()), vec![2..7])])))]
-    #[case("$$${avar}$$", Ok(VariablePositions::from([(CaptureGroup::Named("avar".into()), vec![2..9])])))]
-    fn test_extract_variable_position(
+    // Remaining edge cases
+    // Aborting a (brace) start
+    #[case("$?", Ok("$?"))]
+    #[case("${?", Ok("${?"))]
+    fn test_inject_variables(
         #[case] expression: &str,
-        #[case] expected: Result<VariablePositions, VariableExpressionError>,
+        #[case] expected: Result<&str, VariableExpressionError>,
+        variables: Variables,
     ) {
-        let variables = inject_variables(expression);
+        let result = inject_variables(expression, &variables);
+        let expected = expected.map(str::to_owned);
 
-        assert_eq!(variables, expected);
+        assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    #[case(0, 1)]
+    #[case(1, 1)]
+    #[case(9, 1)]
+    #[case(10, 2)]
+    #[case(99, 2)]
+    #[case(100, 3)]
+    fn test_width(#[case] num: usize, #[case] expected: usize) {
+        assert_eq!(width(num), expected);
     }
 }

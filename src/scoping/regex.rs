@@ -1,11 +1,8 @@
 use super::scope::ScopeContext;
 use super::ROScopes;
 use super::Scoper;
-use crate::ranges::Ranges;
 use crate::RegexPattern;
 use crate::GLOBAL_SCOPE;
-use itertools::Itertools;
-use log::{debug, trace};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
@@ -17,10 +14,27 @@ pub struct Regex {
     captures: Vec<CaptureGroup>,
 }
 
+/// A capture group in a regex, which can be either named (`(?<name>REGEX)`) or numbered
+/// (`(REGEX)`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CaptureGroup {
+    /// A named capture group.
     Named(String),
+    /// A numbered capture group, where 0 stands for the entire match.
     Numbered(usize),
+}
+
+impl fmt::Display for CaptureGroup {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                CaptureGroup::Named(name) => name.clone(),
+                CaptureGroup::Numbered(number) => number.to_string(),
+            }
+        )
+    }
 }
 
 impl Regex {
@@ -114,133 +128,300 @@ impl Scoper for Regex {
         }
 
         return ROScopes::from_raw_ranges(input, ranges);
-
-        // let has_capture_groups = self.pattern.captures_len() > 1;
-
-        // let ranges = if has_capture_groups {
-        //     trace!(
-        //         "Pattern '{}' has capture groups, iterating over matches",
-        //         self.pattern
-        //     );
-        //     let mut ranges = Vec::new();
-        //     for cap in self.pattern.captures_iter(input).flatten() {
-        //         let mut it = cap.iter();
-
-        //         let overall_match = it
-        //             .next()
-        //             // https://docs.rs/regex/1.9.5/regex/struct.SubCaptureMatches.html
-        //             .expect("Entered iterator of matches, but zeroth (whole) match missing")
-        //             .expect("First element guaranteed to be non-None (whole match)");
-        //         trace!(
-        //             "Overall match: '{}' from index {} to {}",
-        //             overall_match.as_str().escape_debug(),
-        //             overall_match.start(),
-        //             overall_match.end()
-        //         );
-
-        //         let subranges = it.flatten().map(|m| m.range()).collect::<Ranges<_>>();
-        //         trace!("Capture groups: {:?}", subranges);
-
-        //         // Treat the capture groups specially
-        //         subranges
-        //             .iter()
-        //             .for_each(|subrange| ranges.extend(Ranges::from(subrange)));
-
-        //         // Parts of the overall match, but not the capture groups: push as-is
-        //         ranges.extend(Ranges::from_iter([overall_match.range()]) - subranges);
-        //     }
-
-        //     let res = ranges.into_iter().collect();
-        //     debug!("Ranges to scope after regex: {:?}", res);
-        //     res
-        // } else {
-        //     trace!(
-        //         "No capture groups in pattern '{}', short-circuiting",
-        //         input.escape_debug()
-        //     );
-
-        //     self.pattern
-        //         .find_iter(input)
-        //         .flatten()
-        //         .map(|m| m.range())
-        //         .collect()
-        // };
-
-        // ROScopes::from_raw_ranges(input, ranges)
     }
 }
 
-#[cfg(never)]
+#[cfg(test)]
 mod tests {
-    use rstest::rstest;
-
+    use super::*;
     use crate::scoping::{
         scope::{
             RWScope, RWScopes,
             Scope::{In, Out},
         },
-        view::ScopedView,
+        view::{ScopedView, ScopedViewBuilder},
     };
+    use rstest::rstest;
     use std::borrow::Cow::Borrowed as B;
 
-    use super::*;
+    /// Get 'Capture Group 0', the default which is always present.
+    #[allow(clippy::unnecessary_wraps)]
+    fn cg0(string: &str) -> Option<ScopeContext> {
+        Some(ScopeContext::CaptureGroups(HashMap::from([(
+            CaptureGroup::Numbered(0),
+            string,
+        )])))
+    }
+
+    /// Get naively numbered capture groups.
+    #[allow(clippy::unnecessary_wraps)]
+    fn cgs<'a>(strings: &[&'a str]) -> Option<ScopeContext<'a>> {
+        let mut cgs = HashMap::new();
+
+        for (i, string) in strings.iter().enumerate() {
+            cgs.insert(CaptureGroup::Numbered(i), *string);
+        }
+
+        Some(ScopeContext::CaptureGroups(cgs))
+    }
 
     #[rstest]
-    #[case("a", "a", ScopedView::new(RWScopes(vec![RWScope(In(B("a")))])))]
-    #[case("aa", "a", ScopedView::new(RWScopes(vec![RWScope(In(B("a"))), RWScope(In(B("a")))])))]
-    #[case("aba", "a", ScopedView::new(RWScopes(vec![RWScope(In(B("a"))), RWScope(Out("b")), RWScope(In(B("a")))])))]
-    //
-    #[case("a", "", ScopedView::new(RWScopes(vec![RWScope(Out("a"))])))]
-    #[case("", "a", ScopedView::new(RWScopes(vec![])))] // Empty results are discarded
-    //
-    #[case("a", "a", ScopedView::new(RWScopes(vec![RWScope(In(B("a")))])))]
-    #[case("a", "b", ScopedView::new(RWScopes(vec![RWScope(Out("a"))])))]
-    //
-    #[case("a", ".*", ScopedView::new(RWScopes(vec![RWScope(In(B("a")))])))]
-    #[case("a", ".+?", ScopedView::new(RWScopes(vec![RWScope(In(B("a")))])))]
-    //
-    #[case("a\na", ".*", ScopedView::new(RWScopes(vec![RWScope(In(B("a"))), RWScope(Out("\n")), RWScope(In(B("a")))])))]
-    #[case("a\na", "(?s).*", ScopedView::new(RWScopes(vec![RWScope(In(B("a\na")))])))] // Dot matches newline
-    //
-    #[case("abc", "a", ScopedView::new(RWScopes(vec![RWScope(In(B("a"))), RWScope(Out("bc"))])))]
-    //
-    #[case("abc", r"\w", ScopedView::new(RWScopes(vec![RWScope(In(B("a"))), RWScope(In(B("b"))), RWScope(In(B("c")))])))]
-    #[case("abc", r"\W", ScopedView::new(RWScopes(vec![RWScope(Out("abc"))])))]
-    #[case("abc", r"\w+", ScopedView::new(RWScopes(vec![RWScope(In(B("abc")))])))]
-    //
-    #[case("Work 69 on 420 words", r"\w+", ScopedView::new(RWScopes(vec![RWScope(In(B("Work"))), RWScope(Out(" ")), RWScope(In(B("69"))), RWScope(Out(" ")), RWScope(In(B("on"))), RWScope(Out(" ")), RWScope(In(B("420"))), RWScope(Out(" ")), RWScope(In(B("words")))])))]
-    #[case("Ignore 69 the 420 digits", r"\p{letter}+", ScopedView::new(RWScopes(vec![RWScope(In(B("Ignore"))), RWScope(Out(" 69 ")), RWScope(In(B("the"))), RWScope(Out(" 420 ")), RWScope(In(B("digits")))])))]
-    //
-    #[case(".", ".", ScopedView::new(RWScopes(vec![RWScope(In(B(".")))])))]
-    #[case(r"\.", ".", ScopedView::new(RWScopes(vec![RWScope(In(B(r"\"))), RWScope(In(B(".")))])))]
-    #[case(r".", r"\.", ScopedView::new(RWScopes(vec![RWScope(In(B(r".")))])))]
-    #[case(r"\.", r"\.", ScopedView::new(RWScopes(vec![RWScope(Out(r"\")), RWScope(In(B(r".")))])))]
-    #[case(r"\w", r"\w", ScopedView::new(RWScopes(vec![RWScope(Out(r"\")), RWScope(In(B(r"w")))])))]
-    //
-    // Capture groups
-    #[case(r"Hello", r"\w+", ScopedView::new(RWScopes(vec![RWScope(In(B(r"Hello")))])))]
     #[case(
-        r"Hello", r"(\w+)",
+        "a",
+        "a",
         ScopedView::new(RWScopes(
             vec![
-                RWScope(In(B(r"H"))),
-                RWScope(In(B(r"e"))),
-                RWScope(In(B(r"l"))),
-                RWScope(In(B(r"l"))),
-                RWScope(In(B(r"o")))
+                RWScope(In(B("a"), cg0("a"))),
+            ])
+        )
+    )]
+    #[case(
+        "aa",
+        "a",
+        ScopedView::new(RWScopes(
+            vec![
+                RWScope(In(B("a"), cg0("a"))),
+                RWScope(In(B("a"), cg0("a"))),
+            ])
+        )
+    )]
+    #[case(
+        "aba",
+        "a",
+        ScopedView::new(RWScopes(
+            vec![
+                RWScope(In(B("a"), cg0("a"))),
+                RWScope(Out("b")),
+                RWScope(In(B("a"), cg0("a"))),
+            ])
+        )
+    )]
+    //
+    #[case(
+        "a",
+        "",
+        ScopedView::new(RWScopes(
+            vec![
+                RWScope(Out("a")),
+            ])
+        )
+    )]
+    #[case(
+        "",
+        "a",
+        ScopedView::new(RWScopes(
+            // Empty results are discarded
+            vec![
+            ])
+        )
+    )]
+    //
+    #[case(
+        "a",
+        "a",
+        ScopedView::new(RWScopes(
+            vec![
+                RWScope(In(B("a"), cg0("a"))),
+            ])
+        )
+    )]
+    #[case(
+        "a",
+        "b",
+        ScopedView::new(RWScopes(
+            vec![
+                RWScope(Out("a")),
+            ])
+        )
+    )]
+    //
+    #[case(
+        "a",
+        ".*",
+        ScopedView::new(RWScopes(
+            vec![
+                RWScope(In(B("a"), cg0("a"))),
+            ])
+        )
+    )]
+    #[case(
+        "a",
+        ".+?",
+        ScopedView::new(RWScopes(
+            vec![
+                RWScope(In(B("a"), cg0("a"))),
+            ])
+        )
+    )]
+    //
+    #[case(
+        "a\na",
+        ".*",
+        ScopedView::new(RWScopes(
+            vec![
+                RWScope(In(B("a"), cg0("a"))),
+                RWScope(Out("\n")),
+                RWScope(In(B("a"), cg0("a"))),
+            ])
+        )
+    )]
+    #[case(
+        "a\na",
+        "(?s).*",
+        ScopedView::new(RWScopes(
+            vec![
+                // Dot matches newline
+                RWScope(In(B("a\na"), cg0("a\na"))),
+            ])
+        )
+    )]
+    //
+    #[case(
+        "abc",
+        "a",
+        ScopedView::new(RWScopes(
+            vec![
+                RWScope(In(B("a"), cg0("a"))),
+                RWScope(Out("bc")),
+            ])
+        )
+    )]
+    //
+    #[case(
+        "abc",
+        r"\w",
+        ScopedView::new(RWScopes(
+            vec![
+                RWScope(In(B("a"), cg0("a"))),
+                RWScope(In(B("b"), cg0("b"))),
+                RWScope(In(B("c"), cg0("c"))),
+            ])
+        )
+    )]
+    #[case(
+        "abc",
+        r"\W",
+        ScopedView::new(RWScopes(
+            vec![
+                RWScope(Out("abc")),
+            ])
+        )
+    )]
+    #[case(
+        "abc",
+        r"\w+",
+        ScopedView::new(RWScopes(
+            vec![
+                RWScope(In(B("abc"), cg0("abc"))),
+            ])
+        )
+    )]
+    //
+    #[case(
+        "Work 69 on 420 words",
+        r"\w+",
+        ScopedView::new(RWScopes(
+            vec![
+                RWScope(In(B("Work"), cg0("Work"))),
+                RWScope(Out(" ")),
+                RWScope(In(B("69"), cg0("69"))),
+                RWScope(Out(" ")),
+                RWScope(In(B("on"), cg0("on"))),
+                RWScope(Out(" ")),
+                RWScope(In(B("420"), cg0("420"))),
+                RWScope(Out(" ")),
+                RWScope(In(B("words"), cg0("words"))),
+            ])
+        )
+    )]
+    #[case(
+        "Ignore 69 the 420 digits",
+        r"\p{letter}+",
+        ScopedView::new(RWScopes(
+            vec![
+                RWScope(In(B("Ignore"), cg0("Ignore"))),
+                RWScope(Out(" 69 ")),
+                RWScope(In(B("the"), cg0("the"))),
+                RWScope(Out(" 420 ")),
+                RWScope(In(B("digits"), cg0("digits"))),
+            ])
+        )
+    )]
+    //
+    #[case(
+        ".",
+        ".",
+        ScopedView::new(RWScopes(
+            vec![
+                RWScope(In(B("."), cg0("."))),
+            ])
+        )
+    )]
+    #[case(
+        r"\.",
+        ".",
+        ScopedView::new(RWScopes(
+            vec![
+                RWScope(In(B(r"\"), cg0(r"\"))),
+                RWScope(In(B("."), cg0("."))),
+            ])
+        )
+    )]
+    #[case(
+        r".",
+        r"\.",
+        ScopedView::new(RWScopes(
+            vec![
+                RWScope(In(B("."), cg0("."))),
+            ])
+        )
+    )]
+    #[case(
+        r"\.",
+        r"\.",
+        ScopedView::new(RWScopes(
+            vec![
+                RWScope(Out(r"\")),
+                RWScope(In(B("."), cg0("."))),
+            ])
+        )
+    )]
+    #[case(
+        r"\w",
+        r"\w",
+        ScopedView::new(RWScopes(
+            vec![
+                RWScope(Out(r"\")),
+                RWScope(In(B("w"), cg0("w"))),
+            ])
+        )
+    )]
+    //
+    // Capture groups
+    #[case(
+        r"Hello",
+        r"\w+",
+        ScopedView::new(RWScopes(
+            vec![
+                RWScope(In(B(r"Hello"), cg0("Hello"))),
+            ])
+        )
+    )]
+    #[case(
+        r"Hello",
+        r"(\w+)",
+        ScopedView::new(RWScopes(
+            vec![
+                RWScope(In(B(r"Hello"), cgs(&["Hello", "Hello"]))),
             ]
         ))
     )]
     #[case(
-        r"Hello World", r"Hello (\w+)",
+        r"Hello World",
+        r"Hello (\w+)",
         ScopedView::new(RWScopes(
             vec![
-                RWScope(In(B(r"Hello "))),
-                RWScope(In(B(r"W"))),
-                RWScope(In(B(r"o"))),
-                RWScope(In(B(r"r"))),
-                RWScope(In(B(r"l"))),
-                RWScope(In(B(r"d")))
+                RWScope(In(B(r"Hello World"), cgs(&["Hello World", "World"]))),
             ]
         ))
     )]
@@ -250,35 +431,25 @@ mod tests {
         r"(?P<msg>.+);(?P<structure>.+)",
         ScopedView::new(RWScopes(
             vec![
-                RWScope(In(B(r#"""#))),
-                RWScope(In(B("e"))),
-                RWScope(In(B("r"))),
-                RWScope(In(B("r"))),
-                RWScope(In(B("o"))),
-                RWScope(In(B("r"))),
-                RWScope(In(B(r#"""#))),
-                RWScope(In(B(";"))),
-                RWScope(In(B(" "))),
-                RWScope(In(B(r#"""#))),
-                RWScope(In(B("x"))),
-                RWScope(In(B(r#"""#))),
-                RWScope(In(B(" "))),
-                RWScope(In(B("="))),
-                RWScope(In(B(">"))),
-                RWScope(In(B(" "))),
-                RWScope(In(B("%"))),
-                RWScope(In(B("x"))),
-                RWScope(In(B(","))),
-                RWScope(In(B(" "))),
-                RWScope(In(B(r#"""#))),
-                RWScope(In(B("y"))),
-                RWScope(In(B(r#"""#))),
-                RWScope(In(B(" "))),
-                RWScope(In(B("="))),
-                RWScope(In(B(">"))),
-                RWScope(In(B(" "))),
-                RWScope(In(B("%"))),
-                RWScope(In(B("y"))),
+                RWScope(
+                    In(B(r#""error"; "x" => %x, "y" => %y"#),
+                    Some(
+                        ScopeContext::CaptureGroups(HashMap::from([
+                            (
+                                CaptureGroup::Numbered(0),
+                                r#""error"; "x" => %x, "y" => %y"#,
+                            ),
+                            (
+                                CaptureGroup::Named("msg".into()),
+                                r#""error""#,
+                            ),
+                            (
+                                CaptureGroup::Named("structure".into()),
+                                r#" "x" => %x, "y" => %y"#,
+                            ),
+                        ]))
+                    ))
+                ),
             ]
         ))
     )]
@@ -287,7 +458,7 @@ mod tests {
         #[case] pattern: &str,
         #[case] expected: ScopedView,
     ) {
-        let mut builder = crate::scoping::view::ScopedViewBuilder::new(input);
+        let mut builder = ScopedViewBuilder::new(input);
         let regex = Regex::new(RegexPattern::new(pattern).unwrap());
         builder.explode(&regex);
         let actual = builder.build();
@@ -393,7 +564,7 @@ mod tests {
                 let scopes = scope.scope(&input);
 
                 if scopes.0.iter().any(|s| match s {
-                    ROScope(In(_)) => true,
+                    ROScope(In(_, _)) => true,
                     ROScope(Out(_)) => false,
                 }) {
                     n_matches += 1;

@@ -133,7 +133,7 @@
 //!
 //! let mut view = ScopedViewBuilder::new(input).build();
 //! let action = German::new(true, false); // Excuse the bool ugliness.
-//! view.map(&action);
+//! view.map_without_context(&action);
 //!
 //! assert_eq!(view.to_string(), "Der Überflieger-Käfer! 🛩️");
 //! # }

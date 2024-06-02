@@ -602,7 +602,7 @@ fn is_valid(word: &str, predicate: &impl Fn(&str) -> bool) -> bool {
     }
 }
 
-#[cfg(never)]
+#[cfg(test)]
 mod tests {
     use super::*;
     use rstest::rstest;
