@@ -1,7 +1,11 @@
 use super::Action;
-use log::info;
-use std::{error::Error, fmt};
+use crate::scoping::{regex::CaptureGroup, scope::ScopeContext};
+use log::{debug, error, info, log_enabled, Level};
+use std::{collections::HashSet, error::Error, fmt};
 use unescape::unescape;
+use variables::{inject_variables, VariableExpressionError, VariablePositions};
+
+mod variables;
 
 /// Replaces input with a fixed string.
 ///
@@ -44,7 +48,10 @@ use unescape::unescape;
 /// );
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Replacement(String);
+pub struct Replacement {
+    repl: String,
+    variables: VariablePositions,
+}
 
 impl TryFrom<String> for Replacement {
     type Error = ReplacementCreationError;
@@ -84,12 +91,16 @@ impl TryFrom<String> for Replacement {
     /// );
     /// ```
     fn try_from(replacement: String) -> Result<Self, Self::Error> {
-        match unescape(&replacement) {
-            Some(res) => Ok(Self(res)),
-            None => Err(ReplacementCreationError::InvalidEscapeSequences(
-                replacement,
-            )),
-        }
+        let unescaped = unescape(&replacement).ok_or(
+            ReplacementCreationError::InvalidEscapeSequences(replacement),
+        )?;
+
+        let variables = inject_variables(&unescaped)?;
+
+        Ok(Self {
+            repl: unescaped,
+            variables,
+        })
     }
 }
 
@@ -98,6 +109,8 @@ impl TryFrom<String> for Replacement {
 pub enum ReplacementCreationError {
     /// The replacement contains invalid escape sequences.
     InvalidEscapeSequences(String),
+    /// The replacement contains an error in its variable expressions.
+    VariableError(VariableExpressionError),
 }
 
 impl fmt::Display for ReplacementCreationError {
@@ -106,15 +119,46 @@ impl fmt::Display for ReplacementCreationError {
             Self::InvalidEscapeSequences(replacement) => {
                 write!(f, "Contains invalid escape sequences: '{replacement}'")
             }
+            Self::VariableError(err) => {
+                write!(f, "Error in variable expressions: '{err}'")
+            }
         }
     }
 }
 
 impl Error for ReplacementCreationError {}
 
+impl From<VariableExpressionError> for ReplacementCreationError {
+    fn from(value: VariableExpressionError) -> Self {
+        Self::VariableError(value)
+    }
+}
+
 impl Action for Replacement {
     fn act(&self, input: &str) -> String {
-        info!("Substituting '{}' with '{}'", input, self.0);
-        self.0.clone()
+        info!("Substituting '{}' with '{}'", input, self.repl);
+        self.repl.clone()
+    }
+
+    fn act_with_context(&self, input: &str, context: ScopeContext) -> String {
+        match context {
+            ScopeContext::CaptureGroups(cgs) => {
+                if log_enabled!(Level::Debug) {
+                    let have: HashSet<&CaptureGroup> = cgs.keys().collect();
+                    let need: HashSet<&CaptureGroup> = self.variables.keys().collect();
+
+                    debug!("Excess capture groups: {:?}", have.difference(&need));
+                    debug!("Common capture groups: {:?}", have.intersection(&need));
+                    error!(
+                        "Needed but missing capture groups: {:?}",
+                        need.difference(&have)
+                    );
+                }
+
+                for (cg, positions) in &self.variables {}
+            }
+        };
+
+        todo!()
     }
 }

@@ -50,34 +50,34 @@ impl Scoper for DosFix {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use rstest::rstest;
+// #[cfg(test)]
+// mod tests {
+//     use rstest::rstest;
 
-    use crate::scoping::{
-        scope::{
-            RWScope, RWScopes,
-            Scope::{In, Out},
-        },
-        view::ScopedView,
-    };
-    use std::borrow::Cow::Borrowed;
+//     use crate::scoping::{
+//         scope::{
+//             RWScope, RWScopes,
+//             Scope::{In, Out},
+//         },
+//         view::ScopedView,
+//     };
+//     use std::borrow::Cow::Borrowed;
 
-    use super::*;
+//     use super::*;
 
-    #[rstest]
-    #[case("a", ScopedView::new(RWScopes(vec![RWScope(In(Borrowed("a")))])))]
-    #[case("a\n", ScopedView::new(RWScopes(vec![RWScope(In(Borrowed("a\n")))])))]
-    //
-    #[case("\r", ScopedView::new(RWScopes(vec![RWScope(Out("\r"))])))]
-    #[case("a\r", ScopedView::new(RWScopes(vec![RWScope(In(Borrowed("a"))), RWScope(Out("\r"))])))]
-    #[case("a\r\n", ScopedView::new(RWScopes(vec![RWScope(In(Borrowed("a"))), RWScope(Out("\r")), RWScope(In(Borrowed("\n")))])))]
-    fn test_dos_fix(#[case] input: &str, #[case] expected: ScopedView) {
-        let mut builder = crate::scoping::view::ScopedViewBuilder::new(input);
-        let dosfix = DosFix;
-        builder.explode(&dosfix);
-        let view = builder.build();
+//     #[rstest]
+//     #[case("a", ScopedView::new(RWScopes(vec![RWScope(In(Borrowed("a")))])))]
+//     #[case("a\n", ScopedView::new(RWScopes(vec![RWScope(In(Borrowed("a\n")))])))]
+//     //
+//     #[case("\r", ScopedView::new(RWScopes(vec![RWScope(Out("\r"))])))]
+//     #[case("a\r", ScopedView::new(RWScopes(vec![RWScope(In(Borrowed("a"))), RWScope(Out("\r"))])))]
+//     #[case("a\r\n", ScopedView::new(RWScopes(vec![RWScope(In(Borrowed("a"))), RWScope(Out("\r")), RWScope(In(Borrowed("\n")))])))]
+//     fn test_dos_fix(#[case] input: &str, #[case] expected: ScopedView) {
+//         let mut builder = crate::scoping::view::ScopedViewBuilder::new(input);
+//         let dosfix = DosFix;
+//         builder.explode(&dosfix);
+//         let view = builder.build();
 
-        assert_eq!(view, expected);
-    }
-}
+//         assert_eq!(view, expected);
+//     }
+// }

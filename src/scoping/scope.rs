@@ -3,13 +3,15 @@ use crate::{
     scoping::scope::Scope::{In, Out},
 };
 use log::{debug, trace};
-use std::{borrow::Cow, ops::Range};
+use std::{borrow::Cow, collections::HashMap, ops::Range};
+
+use super::regex::CaptureGroup;
 
 /// Indicates whether a given string part is in scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Scope<'viewee, T> {
     /// The given part is in scope for processing.
-    In(T),
+    In(T, Option<ScopeContext<'viewee>>),
     /// The given part is out of scope for processing.
     ///
     /// Treated as immutable, view-only.
@@ -41,6 +43,20 @@ impl<'viewee> ROScope<'viewee> {
     }
 }
 
+pub type RangesWithContext<'viewee> = HashMap<Range<usize>, Option<ScopeContext<'viewee>>>;
+
+/// Converts, leaving unknown values [`Default`].
+///
+/// A convenience to support [`Ranges`] where there's no meaningful context to be
+/// inserted for [`RangesWithContext`].
+impl<'viewee> From<Ranges<usize>> for RangesWithContext<'viewee> {
+    fn from(val: Ranges<usize>) -> Self {
+        val.into_iter()
+            .map(|range| (range, Option::default()))
+            .collect()
+    }
+}
+
 impl<'viewee> ROScopes<'viewee> {
     /// Construct a new instance from the given raw ranges.
     ///
@@ -52,15 +68,15 @@ impl<'viewee> ROScopes<'viewee> {
     ///
     /// Panics if the given `ranges` contain indices out-of-bounds for `input`.
     #[must_use]
-    pub fn from_raw_ranges(input: &'viewee str, ranges: Ranges<usize>) -> Self {
+    pub fn from_raw_ranges(input: &'viewee str, ranges: RangesWithContext<'viewee>) -> Self {
         trace!("Constructing scopes from raw ranges: {:?}", ranges);
 
         let mut scopes = Vec::with_capacity(ranges.len());
 
         let mut last_end = 0;
-        for Range { start, end } in ranges {
+        for (Range { start, end }, context) in ranges {
             scopes.push(ROScope(Out(&input[last_end..start])));
-            scopes.push(ROScope(In(&input[start..end])));
+            scopes.push(ROScope(In(&input[start..end], context)));
             last_end = end;
         }
 
@@ -83,8 +99,8 @@ impl<'viewee> ROScopes<'viewee> {
             .0
             .into_iter()
             .map(|s| match s {
-                ROScope(In(s)) => ROScope(Out(s)),
-                ROScope(Out(s)) => ROScope(In(s)),
+                ROScope(In(s, _)) => ROScope(Out(s)),
+                ROScope(Out(s)) => ROScope(In(s, None)),
             })
             .collect();
         trace!("Inverted scopes: {:?}", scopes);
@@ -134,7 +150,7 @@ impl<'viewee> From<&'viewee ROScope<'viewee>> for &'viewee str {
     /// All variants contain such a slice, so this is a convenient method.
     fn from(s: &'viewee ROScope) -> Self {
         match s.0 {
-            In(s) | Out(s) => s,
+            In(s, _) | Out(s) => s,
         }
     }
 }
@@ -142,7 +158,7 @@ impl<'viewee> From<&'viewee ROScope<'viewee>> for &'viewee str {
 impl<'viewee> From<ROScope<'viewee>> for RWScope<'viewee> {
     fn from(s: ROScope<'viewee>) -> Self {
         match s.0 {
-            In(s) => RWScope(In(Cow::Borrowed(s))),
+            In(s, names) => RWScope(In(Cow::Borrowed(s), names)),
             Out(s) => RWScope(Out(s)),
         }
     }
@@ -154,13 +170,18 @@ impl<'viewee> From<&'viewee RWScope<'viewee>> for &'viewee str {
     /// All variants contain such a slice, so this is a convenient method.
     fn from(s: &'viewee RWScope) -> Self {
         match &s.0 {
-            In(s) => s,
+            In(s, _) => s,
             Out(s) => s,
         }
     }
 }
 
-#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScopeContext<'viewee> {
+    CaptureGroups(HashMap<CaptureGroup, &'viewee str>),
+}
+
+#[cfg(never)]
 mod tests {
     use super::*;
     use rstest::rstest;

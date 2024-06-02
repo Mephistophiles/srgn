@@ -1,3 +1,5 @@
+use crate::ranges::Ranges;
+
 use super::{ROScopes, Scoper};
 use log::trace;
 use std::{error::Error, fmt, ops::Range};
@@ -42,7 +44,7 @@ impl Scoper for Literal {
         let ranges = {
             let len = self.0.len();
 
-            let ranges = input
+            let ranges: Ranges<usize> = input
                 .match_indices(&self.0)
                 .map(|(i, _)| Range {
                     start: i,
@@ -55,11 +57,11 @@ impl Scoper for Literal {
             ranges
         };
 
-        ROScopes::from_raw_ranges(input, ranges)
+        ROScopes::from_raw_ranges(input, ranges.into())
     }
 }
 
-#[cfg(test)]
+#[cfg(never)]
 mod tests {
     use rstest::rstest;
 

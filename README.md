@@ -12,6 +12,11 @@ Born a Unicode-capable [descendant of `tr`](#comparison-with-tr), `srgn` adds us
 - precise manipulation, not just matching, is required, and lastly and optionally,
 - Unicode-specific trickery is desired.
 
+```bash
+$ echo 'Hello123' | srgn '(\w+)(\d+)' '$2$1'
+123Hello
+```
+
 ## Usage
 
 For an "end-to-end" example, consider this Python snippet ([more languages are

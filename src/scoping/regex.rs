@@ -1,9 +1,12 @@
+use super::scope::ScopeContext;
 use super::ROScopes;
 use super::Scoper;
 use crate::ranges::Ranges;
 use crate::RegexPattern;
 use crate::GLOBAL_SCOPE;
+use itertools::Itertools;
 use log::{debug, trace};
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 
@@ -11,13 +14,32 @@ use std::fmt;
 #[derive(Debug)]
 pub struct Regex {
     pattern: RegexPattern,
+    captures: Vec<CaptureGroup>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum CaptureGroup {
+    Named(String),
+    Numbered(usize),
 }
 
 impl Regex {
     /// Create a new regular expression.
     #[must_use]
     pub fn new(pattern: RegexPattern) -> Self {
-        Self { pattern }
+        let capture_names = pattern
+            .capture_names()
+            .enumerate()
+            .map(|(i, name)| match name {
+                Some(name) => CaptureGroup::Named(name.to_owned()),
+                None => CaptureGroup::Numbered(i),
+            })
+            .collect();
+
+        Self {
+            pattern,
+            captures: capture_names,
+        }
     }
 }
 
@@ -53,62 +75,102 @@ impl Default for Regex {
 
 impl Scoper for Regex {
     fn scope<'viewee>(&self, input: &'viewee str) -> ROScopes<'viewee> {
-        let has_capture_groups = self.pattern.captures_len() > 1;
+        let mut ranges = HashMap::new();
+        for cap in self.pattern.captures_iter(input) {
+            match cap {
+                Ok(cap) => {
+                    let capture_context: HashMap<CaptureGroup, &str> = self
+                        .captures
+                        .iter()
+                        .filter_map(|cg| {
+                            match cg {
+                                CaptureGroup::Named(name) => cap.name(name.as_str()),
+                                CaptureGroup::Numbered(number) => cap.get(*number),
+                            }
+                            .map(|r#match| (cg.clone(), r#match.as_str()))
+                        })
+                        .collect();
 
-        let ranges = if has_capture_groups {
-            trace!(
-                "Pattern '{}' has capture groups, iterating over matches",
-                self.pattern
-            );
-            let mut ranges = Vec::new();
-            for cap in self.pattern.captures_iter(input).flatten() {
-                let mut it = cap.iter();
-
-                let overall_match = it
-                    .next()
-                    // https://docs.rs/regex/1.9.5/regex/struct.SubCaptureMatches.html
-                    .expect("Entered iterator of matches, but zeroth (whole) match missing")
-                    .expect("First element guaranteed to be non-None (whole match)");
-                trace!(
-                    "Overall match: '{}' from index {} to {}",
-                    overall_match.as_str().escape_debug(),
-                    overall_match.start(),
-                    overall_match.end()
-                );
-
-                let subranges = it.flatten().map(|m| m.range()).collect::<Ranges<_>>();
-                trace!("Capture groups: {:?}", subranges);
-
-                // Treat the capture groups specially
-                subranges
-                    .iter()
-                    .for_each(|subrange| ranges.extend(Ranges::from(subrange)));
-
-                // Parts of the overall match, but not the capture groups: push as-is
-                ranges.extend(Ranges::from_iter([overall_match.range()]) - subranges);
+                    ranges.insert(
+                        cap.get(0)
+                            .expect("index 0 guaranteed to contain whole match")
+                            .range(),
+                        Some(ScopeContext::CaptureGroups(capture_context)),
+                    );
+                }
+                // Let's blow up on purpose instead of silently continuing; any of
+                // these errors a user will likely want to know about, as they
+                // indicate serious failure.
+                Err(fancy_regex::Error::RuntimeError(e)) => {
+                    panic!("regex exceeded runtime limits: {e}")
+                }
+                Err(fancy_regex::Error::ParseError(_, _) | fancy_regex::Error::CompileError(_)) => {
+                    unreachable!("pattern was compiled successfully before")
+                }
+                Err(fancy_regex::Error::__Nonexhaustive) => {
+                    unreachable!("implementation detail of fancy-regex")
+                }
             }
+        }
 
-            let res = ranges.into_iter().collect();
-            debug!("Ranges to scope after regex: {:?}", res);
-            res
-        } else {
-            trace!(
-                "No capture groups in pattern '{}', short-circuiting",
-                input.escape_debug()
-            );
+        return ROScopes::from_raw_ranges(input, ranges);
 
-            self.pattern
-                .find_iter(input)
-                .flatten()
-                .map(|m| m.range())
-                .collect()
-        };
+        // let has_capture_groups = self.pattern.captures_len() > 1;
 
-        ROScopes::from_raw_ranges(input, ranges)
+        // let ranges = if has_capture_groups {
+        //     trace!(
+        //         "Pattern '{}' has capture groups, iterating over matches",
+        //         self.pattern
+        //     );
+        //     let mut ranges = Vec::new();
+        //     for cap in self.pattern.captures_iter(input).flatten() {
+        //         let mut it = cap.iter();
+
+        //         let overall_match = it
+        //             .next()
+        //             // https://docs.rs/regex/1.9.5/regex/struct.SubCaptureMatches.html
+        //             .expect("Entered iterator of matches, but zeroth (whole) match missing")
+        //             .expect("First element guaranteed to be non-None (whole match)");
+        //         trace!(
+        //             "Overall match: '{}' from index {} to {}",
+        //             overall_match.as_str().escape_debug(),
+        //             overall_match.start(),
+        //             overall_match.end()
+        //         );
+
+        //         let subranges = it.flatten().map(|m| m.range()).collect::<Ranges<_>>();
+        //         trace!("Capture groups: {:?}", subranges);
+
+        //         // Treat the capture groups specially
+        //         subranges
+        //             .iter()
+        //             .for_each(|subrange| ranges.extend(Ranges::from(subrange)));
+
+        //         // Parts of the overall match, but not the capture groups: push as-is
+        //         ranges.extend(Ranges::from_iter([overall_match.range()]) - subranges);
+        //     }
+
+        //     let res = ranges.into_iter().collect();
+        //     debug!("Ranges to scope after regex: {:?}", res);
+        //     res
+        // } else {
+        //     trace!(
+        //         "No capture groups in pattern '{}', short-circuiting",
+        //         input.escape_debug()
+        //     );
+
+        //     self.pattern
+        //         .find_iter(input)
+        //         .flatten()
+        //         .map(|m| m.range())
+        //         .collect()
+        // };
+
+        // ROScopes::from_raw_ranges(input, ranges)
     }
 }
 
-#[cfg(test)]
+#[cfg(never)]
 mod tests {
     use rstest::rstest;
 

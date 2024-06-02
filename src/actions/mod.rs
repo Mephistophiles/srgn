@@ -9,6 +9,7 @@ mod symbols;
 mod titlecase;
 mod upper;
 
+use crate::scoping::scope::ScopeContext;
 pub use deletion::Deletion;
 #[cfg(feature = "german")]
 pub use german::German;
@@ -31,6 +32,15 @@ pub trait Action: Send + Sync {
     /// This is infallible: it cannot fail in the sense of [`Result`]. It can only
     /// return incorrect results, which would be bugs (please report).
     fn act(&self, input: &str) -> String;
+
+    /// Acts taking into account additional context.
+    ///
+    /// By default, the context is ignored and [`Action::act`] is called. Implementors
+    /// which need and know how to handle additional context can overwrite this method.
+    fn act_with_context(&self, input: &str, context: ScopeContext) -> String {
+        let _ = context; // Mark variable as used
+        self.act(input)
+    }
 }
 
 /// Any function that can be used as an [`Action`].

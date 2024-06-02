@@ -45,14 +45,14 @@ impl<'viewee> ScopedView<'viewee> {
     pub fn map(&mut self, action: &impl Action) -> &mut Self {
         for scope in &mut self.scopes.0 {
             match scope {
-                RWScope(In(s)) => {
+                RWScope(In(s, names)) => {
                     let res = action.act(s);
                     debug!(
                         "Replacing '{}' with '{}'",
                         s.escape_debug(),
                         res.escape_debug()
                     );
-                    *scope = RWScope(In(Cow::Owned(res)));
+                    *scope = RWScope(In(Cow::Owned(res), names.clone()));
                 }
                 RWScope(Out(s)) => {
                     debug!("Appending '{}'", s.escape_debug());
@@ -69,8 +69,8 @@ impl<'viewee> ScopedView<'viewee> {
 
         let mut prev_was_in = false;
         self.scopes.0.retain(|scope| {
-            let keep = !(prev_was_in && matches!(scope, RWScope(In(_))));
-            prev_was_in = matches!(scope, RWScope(In(_)));
+            let keep = !(prev_was_in && matches!(scope, RWScope(In(_, _))));
+            prev_was_in = matches!(scope, RWScope(In(_, _)));
             trace!("keep: {}, scope: {:?}", keep, scope);
             keep
         });
@@ -84,7 +84,7 @@ impl<'viewee> ScopedView<'viewee> {
     #[must_use]
     pub fn has_any_in_scope(&self) -> bool {
         self.scopes.0.iter().any(|s| match s {
-            RWScope(In(_)) => true,
+            RWScope(In(_, _)) => true,
             RWScope(Out(_)) => false,
         })
     }
@@ -196,7 +196,7 @@ impl<'viewee> ScopedViewBuilder<'viewee> {
     #[must_use]
     pub fn new(input: &'viewee str) -> Self {
         Self {
-            scopes: ROScopes(vec![ROScope(In(input))]),
+            scopes: ROScopes(vec![ROScope(In(input, None))]),
             viewee: input,
         }
     }
@@ -216,7 +216,7 @@ impl<'viewee> ScopedViewBuilder<'viewee> {
     /// See [`DosFix`].
     fn apply_dos_line_endings_fix(&mut self) {
         if self.scopes.0.windows(2).any(|window| match window {
-            [ROScope(In(left)), ROScope(Out(right))] => {
+            [ROScope(In(left, _)), ROScope(Out(right))] => {
                 left.ends_with('\r') && right.starts_with('\n')
             }
             _ => false,
@@ -261,7 +261,11 @@ impl<'viewee> ScopedViewBuilder<'viewee> {
             }
 
             match scope {
-                ROScope(In(s)) => {
+                ROScope(In(s, names)) => {
+                    assert!(
+                        names.is_none(),
+                        "Cannot explode anymore once names are present"
+                    );
                     let mut new_scopes = scoper.scope(s);
                     new_scopes.0.retain(|s| !s.is_empty());
                     new.extend(new_scopes.0);
