@@ -1,4 +1,4 @@
-use super::{CodeQuery, Language, LanguageScoper, TSLanguage, TSQuery};
+use super::{negate, Frobulator, LanguageScoper, TSLanguage, TSQuery, NEG_QUERY, POS_QUERY};
 use crate::{
     find::Find,
     scoping::{langs::IGNORE, scope::RangesWithContext, Scoper},
@@ -8,10 +8,24 @@ use const_format::formatcp;
 use std::{fmt::Debug, str::FromStr};
 use tree_sitter::QueryError;
 
+pub struct CSharp {
+    q: TSQuery,
+    nq: Option<TSQuery>,
+}
+
+impl CSharp {
+    pub fn new(q: impl Into<TSQuery> + Clone) -> Self {
+        Self {
+            q: q.clone().into(),
+            nq: negate(q),
+        }
+    }
+}
+
 /// The C# language.
-pub type CSharp = Language<CSharpQuery>;
+// pub type CSharp = Frobulator<CSharpQuery>;
 /// A query for C#.
-pub type CSharpQuery = CodeQuery<CustomCSharpQuery, PreparedCSharpQuery>;
+// pub type CSharpQuery = CodeQuery<CustomCSharpQuery, PreparedCSharpQuery>;
 
 /// Prepared tree-sitter queries for C#.
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -78,19 +92,20 @@ impl From<CustomCSharpQuery> for TSQuery {
     }
 }
 
-impl Scoper for CSharp {
-    fn scope_raw<'viewee>(&self, input: &'viewee str) -> RangesWithContext<'viewee> {
-        Self::scope_via_query(&mut self.query(), input).into()
-    }
-}
-
 impl LanguageScoper for CSharp {
     fn lang() -> TSLanguage {
         tree_sitter_c_sharp::language()
     }
 
-    fn query(&self) -> TSQuery {
-        self.query.clone().into()
+    fn query(&self) -> &TSQuery {
+        &self.q
+    }
+
+    fn neg_query(&self) -> Option<&TSQuery>
+    where
+        Self: Sized,
+    {
+        self.nq.as_ref()
     }
 }
 

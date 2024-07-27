@@ -1,4 +1,4 @@
-use super::{CodeQuery, Find, Language, LanguageScoper, TSLanguage, TSQuery};
+use super::{negate, Find, Frobulator, LanguageScoper, TSLanguage, TSQuery, NEG_QUERY, POS_QUERY};
 use crate::scoping::{langs::IGNORE, scope::RangesWithContext, Scoper};
 use clap::ValueEnum;
 use const_format::formatcp;
@@ -6,9 +6,22 @@ use std::{fmt::Debug, str::FromStr};
 use tree_sitter::QueryError;
 
 /// The Python language.
-pub type Python = Language<PythonQuery>;
+pub struct Python {
+    q: TSQuery,
+    nq: Option<TSQuery>,
+}
+
+impl Python {
+    pub fn new(q: impl Into<TSQuery> + Clone) -> Self {
+        Self {
+            q: q.clone().into(),
+            nq: negate(q),
+        }
+    }
+}
+// pub type Python = Frobulator<PythonQuery>;
 /// A query for Python.
-pub type PythonQuery = CodeQuery<CustomPythonQuery, PreparedPythonQuery>;
+// pub type PythonQuery = CodeQuery<CustomPythonQuery, PreparedPythonQuery>;
 
 /// Prepared tree-sitter queries for Python.
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -114,19 +127,22 @@ impl From<CustomPythonQuery> for TSQuery {
     }
 }
 
-impl Scoper for Python {
-    fn scope_raw<'viewee>(&self, input: &'viewee str) -> RangesWithContext<'viewee> {
-        Self::scope_via_query(&mut self.query(), input).into()
-    }
-}
+// impl Language for Python {}
 
 impl LanguageScoper for Python {
     fn lang() -> TSLanguage {
         tree_sitter_python::language()
     }
 
-    fn query(&self) -> TSQuery {
-        self.query.clone().into()
+    fn query(&self) -> &TSQuery {
+        &self.q
+    }
+
+    fn neg_query(&self) -> Option<&TSQuery>
+    where
+        Self: Sized,
+    {
+        self.nq.as_ref()
     }
 }
 

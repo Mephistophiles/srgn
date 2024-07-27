@@ -1,13 +1,27 @@
-use super::{CodeQuery, Find, Language, LanguageScoper, TSLanguage, TSQuery};
+use super::{negate, Find, Frobulator, LanguageScoper, TSLanguage, TSQuery, NEG_QUERY, POS_QUERY};
 use crate::scoping::{scope::RangesWithContext, Scoper};
 use clap::ValueEnum;
 use std::{fmt::Debug, str::FromStr};
 use tree_sitter::QueryError;
 
 /// The TypeScript language.
-pub type TypeScript = Language<TypeScriptQuery>;
-/// A query for TypeScript.
-pub type TypeScriptQuery = CodeQuery<CustomTypeScriptQuery, PreparedTypeScriptQuery>;
+// pub type TypeScript = Frobulator<TypeScriptQuery>;
+// /// A query for TypeScript.
+// pub type TypeScriptQuery = CodeQuery<CustomTypeScriptQuery, PreparedTypeScriptQuery>;
+pub struct TypeScript {
+    q: TSQuery,
+    nq: Option<TSQuery>,
+}
+
+impl TypeScript {
+    pub fn new(q: impl Into<TSQuery> + Clone) -> Self {
+        Self {
+            q: q.clone().into(),
+            nq: negate(q),
+        }
+    }
+}
+
 /// Prepared tree-sitter queries for TypeScript.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum PreparedTypeScriptQuery {
@@ -57,19 +71,20 @@ impl From<CustomTypeScriptQuery> for TSQuery {
     }
 }
 
-impl Scoper for TypeScript {
-    fn scope_raw<'viewee>(&self, input: &'viewee str) -> RangesWithContext<'viewee> {
-        Self::scope_via_query(&mut self.query(), input).into()
-    }
-}
-
 impl LanguageScoper for TypeScript {
     fn lang() -> TSLanguage {
         tree_sitter_typescript::language_typescript()
     }
 
-    fn query(&self) -> TSQuery {
-        self.query.clone().into()
+    fn query(&self) -> &TSQuery {
+        &self.q
+    }
+
+    fn neg_query(&self) -> Option<&TSQuery>
+    where
+        Self: Sized,
+    {
+        self.nq.as_ref()
     }
 }
 

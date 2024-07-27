@@ -20,6 +20,12 @@ use srgn::actions::Titlecase;
 use srgn::actions::Upper;
 #[cfg(feature = "symbols")]
 use srgn::actions::{Symbols, SymbolsInversion};
+use srgn::scoping::langs::csharp::{CustomCSharpQuery, PreparedCSharpQuery};
+use srgn::scoping::langs::go::{CustomGoQuery, PreparedGoQuery};
+use srgn::scoping::langs::hcl::{CustomHclQuery, PreparedHclQuery};
+use srgn::scoping::langs::python::{CustomPythonQuery, PreparedPythonQuery};
+use srgn::scoping::langs::rust::{CustomRustQuery, PreparedRustQuery};
+use srgn::scoping::langs::typescript::{CustomTypeScriptQuery, PreparedTypeScriptQuery};
 use srgn::scoping::langs::LanguageScoper;
 use srgn::scoping::literal::LiteralError;
 use srgn::scoping::regex::RegexError;
@@ -27,12 +33,7 @@ use srgn::{
     actions::Action,
     scoping::{
         langs::{
-            csharp::{CSharp, CSharpQuery},
-            go::{Go, GoQuery},
-            hcl::{Hcl, HclQuery},
-            python::{Python, PythonQuery},
-            rust::{Rust, RustQuery},
-            typescript::{TypeScript, TypeScriptQuery},
+            csharp::CSharp, go::Go, hcl::Hcl, python::Python, rust::Rust, typescript::TypeScript,
         },
         literal::Literal,
         regex::Regex,
@@ -599,16 +600,16 @@ fn get_language_scoper(args: &cli::Cli) -> Option<(Box<dyn LanguageScoper>, Box<
     let mut scopers: Vec<(Box<dyn LanguageScoper>, Box<dyn Scoper>)> = Vec::new();
 
     macro_rules! handle_language_scope {
-        ($lang:ident, $lang_query:ident, $query_type:ident, $lang_type:ident) => {
+        ($lang:ident, $lang_query:ident, $query_type_prep:ident, $query_type_custom:ident, $lang_type:ident) => {
             if let Some(lang_scope) = &args.languages_scopes.$lang {
                 if let Some(prepared) = lang_scope.$lang {
-                    let query = $query_type::Prepared(prepared);
+                    let query = prepared;
                     scopers.push((
                         Box::new($lang_type::new(query.clone())),
                         Box::new($lang_type::new(query)),
                     ));
                 } else if let Some(custom) = &lang_scope.$lang_query {
-                    let query = $query_type::Custom(custom.clone());
+                    let query = custom.clone();
                     scopers.push((
                         Box::new($lang_type::new(query.clone())),
                         Box::new($lang_type::new(query)),
@@ -620,12 +621,30 @@ fn get_language_scoper(args: &cli::Cli) -> Option<(Box<dyn LanguageScoper>, Box<
         };
     }
 
-    handle_language_scope!(csharp, csharp_query, CSharpQuery, CSharp);
-    handle_language_scope!(hcl, hcl_query, HclQuery, Hcl);
-    handle_language_scope!(go, go_query, GoQuery, Go);
-    handle_language_scope!(python, python_query, PythonQuery, Python);
-    handle_language_scope!(rust, rust_query, RustQuery, Rust);
-    handle_language_scope!(typescript, typescript_query, TypeScriptQuery, TypeScript);
+    handle_language_scope!(
+        csharp,
+        csharp_query,
+        PreparedCSharpQuery,
+        CustomCSharpQuery,
+        CSharp
+    );
+    handle_language_scope!(hcl, hcl_query, PreparedHclQuery, CustomHclQuery, Hcl);
+    handle_language_scope!(go, go_query, PreparedGoQuery, CustomGoQuery, Go);
+    handle_language_scope!(
+        python,
+        python_query,
+        PreparedPythonQuery,
+        CustomPythonQuery,
+        Python
+    );
+    handle_language_scope!(rust, rust_query, PreparedRustQuery, CustomRustQuery, Rust);
+    handle_language_scope!(
+        typescript,
+        typescript_query,
+        PreparedTypeScriptQuery,
+        CustomTypeScriptQuery,
+        TypeScript
+    );
 
     // We could just `return` after the first found, but then we wouldn't know whether
     // we had a bug. So collect, then assert we only found one max.

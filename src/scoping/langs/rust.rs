@@ -1,13 +1,27 @@
-use super::{CodeQuery, Find, Language, LanguageScoper, TSLanguage, TSQuery};
+use super::{negate, Find, Frobulator, LanguageScoper, TSLanguage, TSQuery, NEG_QUERY, POS_QUERY};
 use crate::scoping::{scope::RangesWithContext, Scoper};
 use clap::ValueEnum;
 use std::{fmt::Debug, str::FromStr};
 use tree_sitter::QueryError;
 
+pub struct Rust {
+    q: TSQuery,
+    nq: Option<TSQuery>,
+}
+
+impl Rust {
+    pub fn new(q: impl Into<TSQuery> + Clone) -> Self {
+        Self {
+            q: q.clone().into(),
+            nq: negate(q),
+        }
+    }
+}
+
 /// The Rust language.
-pub type Rust = Language<RustQuery>;
+// pub type Rust = Frobulator<RustQuery>;
 /// A query for Rust.
-pub type RustQuery = CodeQuery<CustomRustQuery, PreparedRustQuery>;
+// pub type RustQuery = CodeQuery<CustomRustQuery, PreparedRustQuery>;
 
 /// Prepared tree-sitter queries for Rust.
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -94,19 +108,20 @@ impl From<CustomRustQuery> for TSQuery {
     }
 }
 
-impl Scoper for Rust {
-    fn scope_raw<'viewee>(&self, input: &'viewee str) -> RangesWithContext<'viewee> {
-        Self::scope_via_query(&mut self.query(), input).into()
-    }
-}
-
 impl LanguageScoper for Rust {
     fn lang() -> TSLanguage {
         tree_sitter_rust::language()
     }
 
-    fn query(&self) -> TSQuery {
-        self.query.clone().into()
+    fn query(&self) -> &TSQuery {
+        &self.q
+    }
+
+    fn neg_query(&self) -> Option<&TSQuery>
+    where
+        Self: Sized,
+    {
+        self.nq.as_ref()
     }
 }
 

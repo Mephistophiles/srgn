@@ -8,7 +8,7 @@ use srgn::scoping::{
         python::{PreparedPythonQuery, Python},
         rust::{PreparedRustQuery, Rust},
         typescript::{PreparedTypeScriptQuery, TypeScript},
-        CodeQuery, LanguageScoper,
+        LanguageScoper,
     },
     scope::Scope,
     view::ScopedViewBuilder,
@@ -75,142 +75,142 @@ impl InScopeLinePart {
 #[case(
     "base.py_comments",
     include_str!("python/base.py"),
-    Python::new(CodeQuery::Prepared(PreparedPythonQuery::Comments)),
+    Python::new(PreparedPythonQuery::Comments),
 )]
 #[case(
     "base.py_strings",
     include_str!("python/base.py"),
-    Python::new(CodeQuery::Prepared(PreparedPythonQuery::Strings)),
+    Python::new(PreparedPythonQuery::Strings),
 )]
 #[case(
     "base.py_imports",
     include_str!("python/base.py"),
-    Python::new(CodeQuery::Prepared(PreparedPythonQuery::Imports)),
+    Python::new(PreparedPythonQuery::Imports),
 )]
 #[case(
     "base.py_docstrings",
     include_str!("python/base.py"),
-    Python::new(CodeQuery::Prepared(PreparedPythonQuery::DocStrings)),
+    Python::new(PreparedPythonQuery::DocStrings),
 )]
 #[case(
     "base.py_function-names",
     include_str!("python/base.py"),
-    Python::new(CodeQuery::Prepared(PreparedPythonQuery::FunctionNames)),
+    Python::new(PreparedPythonQuery::FunctionNames),
 )]
 #[case(
     "base.py_function-calls",
     include_str!("python/base.py"),
-    Python::new(CodeQuery::Prepared(PreparedPythonQuery::FunctionCalls)),
+    Python::new(PreparedPythonQuery::FunctionCalls),
 )]
 #[case(
     "base.py_class",
     include_str!("python/base.py"),
-    Python::new(CodeQuery::Prepared(PreparedPythonQuery::Class)),
+    Python::new(PreparedPythonQuery::Class),
 )]
 #[case(
     "base.ts_strings",
     include_str!("typescript/base.ts"),
-    TypeScript::new(CodeQuery::Prepared(PreparedTypeScriptQuery::Strings)),
+    TypeScript::new(PreparedTypeScriptQuery::Strings),
 )]
 #[case(
     "base.ts_comments",
     include_str!("typescript/base.ts"),
-    TypeScript::new(CodeQuery::Prepared(PreparedTypeScriptQuery::Comments)),
+    TypeScript::new(PreparedTypeScriptQuery::Comments),
 )]
 #[case(
     "base.ts_imports",
     include_str!("typescript/base.ts"),
-    TypeScript::new(CodeQuery::Prepared(PreparedTypeScriptQuery::Imports)),
+    TypeScript::new(PreparedTypeScriptQuery::Imports),
 )]
 #[case(
     "base.rs_strings",
     include_str!("rust/base.rs"),
-    Rust::new(CodeQuery::Prepared(PreparedRustQuery::Strings)),
+    Rust::new(PreparedRustQuery::Strings),
 )]
 #[case(
     "base.rs_comments",
     include_str!("rust/base.rs"),
-    Rust::new(CodeQuery::Prepared(PreparedRustQuery::Comments)),
+    Rust::new(PreparedRustQuery::Comments),
 )]
 #[case(
     "base.rs_uses",
     include_str!("rust/base.rs"),
-    Rust::new(CodeQuery::Prepared(PreparedRustQuery::Uses)),
+    Rust::new(PreparedRustQuery::Uses),
 )]
 #[case(
     "base.rs_doc-comments",
     include_str!("rust/base.rs"),
-    Rust::new(CodeQuery::Prepared(PreparedRustQuery::DocComments)),
+    Rust::new(PreparedRustQuery::DocComments),
 )]
 #[case(
     "base.tf_variables",
     include_str!("hcl/base.tf"),
-    Hcl::new(CodeQuery::Prepared(PreparedHclQuery::Variables)),
+    Hcl::new(PreparedHclQuery::Variables),
 )]
 #[case(
     "base.tf_resource-types",
     include_str!("hcl/base.tf"),
-    Hcl::new(CodeQuery::Prepared(PreparedHclQuery::ResourceTypes)),
+    Hcl::new(PreparedHclQuery::ResourceTypes),
 )]
 #[case(
     "base.tf_resource-names",
     include_str!("hcl/base.tf"),
-    Hcl::new(CodeQuery::Prepared(PreparedHclQuery::ResourceNames)),
+    Hcl::new(PreparedHclQuery::ResourceNames),
 )]
 #[case(
     "base.tf_data-names",
     include_str!("hcl/base.tf"),
-    Hcl::new(CodeQuery::Prepared(PreparedHclQuery::DataNames)),
+    Hcl::new(PreparedHclQuery::DataNames),
 )]
 #[case(
     "base.tf_data-sources",
     include_str!("hcl/base.tf"),
-    Hcl::new(CodeQuery::Prepared(PreparedHclQuery::DataSources)),
+    Hcl::new(PreparedHclQuery::DataSources),
 )]
 #[case(
     "base.tf_comments",
     include_str!("hcl/base.tf"),
-    Hcl::new(CodeQuery::Prepared(PreparedHclQuery::Comments)),
+    Hcl::new(PreparedHclQuery::Comments),
 )]
 #[case(
     "base.tf_strings",
     include_str!("hcl/base.tf"),
-    Hcl::new(CodeQuery::Prepared(PreparedHclQuery::Strings)),
+    Hcl::new(PreparedHclQuery::Strings),
 )]
 #[case(
     "base.go_comments",
     include_str!("go/base.go"),
-    Go::new(CodeQuery::Prepared(PreparedGoQuery::Comments)),
+    Go::new(PreparedGoQuery::Comments),
 )]
 #[case(
     "base.go_strings",
     include_str!("go/base.go"),
-    Go::new(CodeQuery::Prepared(PreparedGoQuery::Strings)),
+    Go::new(PreparedGoQuery::Strings),
 )]
 #[case(
     "base.go_imports",
     include_str!("go/base.go"),
-    Go::new(CodeQuery::Prepared(PreparedGoQuery::Imports)),
+    Go::new(PreparedGoQuery::Imports),
 )]
 #[case(
     "base.go_struct-tags",
     include_str!("go/base.go"),
-    Go::new(CodeQuery::Prepared(PreparedGoQuery::StructTags)),
+    Go::new(PreparedGoQuery::StructTags),
 )]
 #[case(
     "base.cs_strings",
     include_str!("csharp/base.cs"),
-    CSharp::new(CodeQuery::Prepared(PreparedCSharpQuery::Strings)),
+    CSharp::new(PreparedCSharpQuery::Strings),
 )]
 #[case(
     "base.cs_usings",
     include_str!("csharp/base.cs"),
-    CSharp::new(CodeQuery::Prepared(PreparedCSharpQuery::Usings)),
+    CSharp::new(PreparedCSharpQuery::Usings),
 )]
 #[case(
     "base.cs_comments",
     include_str!("csharp/base.cs"),
-    CSharp::new(CodeQuery::Prepared(PreparedCSharpQuery::Comments)),
+    CSharp::new(PreparedCSharpQuery::Comments),
 )]
 fn test_language_scopers(
     #[case] snapshot_name: &str,

@@ -1,4 +1,4 @@
-use super::{CodeQuery, Language, LanguageScoper, TSLanguage, TSQuery};
+use super::{negate, Frobulator, LanguageScoper, TSLanguage, TSQuery, NEG_QUERY, POS_QUERY};
 use crate::{
     find::Find,
     scoping::{langs::IGNORE, scope::RangesWithContext, Scoper},
@@ -8,10 +8,24 @@ use const_format::formatcp;
 use std::{fmt::Debug, str::FromStr};
 use tree_sitter::QueryError;
 
+pub struct Hcl {
+    q: TSQuery,
+    nq: Option<TSQuery>,
+}
+
+impl Hcl {
+    pub fn new(q: impl Into<TSQuery> + Clone) -> Self {
+        Self {
+            q: q.clone().into(),
+            nq: negate(q),
+        }
+    }
+}
+
 /// The Hashicorp Configuration Language.
-pub type Hcl = Language<HclQuery>;
-/// A query for HCL.
-pub type HclQuery = CodeQuery<CustomHclQuery, PreparedHclQuery>;
+// pub type Hcl = Frobulator<HclQuery>;
+// /// A query for HCL.
+// pub type HclQuery = CodeQuery<CustomHclQuery, PreparedHclQuery>;
 
 /// Prepared tree-sitter queries for Hcl.
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -257,19 +271,20 @@ impl From<CustomHclQuery> for TSQuery {
     }
 }
 
-impl Scoper for Hcl {
-    fn scope_raw<'viewee>(&self, input: &'viewee str) -> RangesWithContext<'viewee> {
-        Self::scope_via_query(&mut self.query(), input).into()
-    }
-}
-
 impl LanguageScoper for Hcl {
     fn lang() -> TSLanguage {
         tree_sitter_hcl::language()
     }
 
-    fn query(&self) -> TSQuery {
-        self.query.clone().into()
+    fn query(&self) -> &TSQuery {
+        &self.q
+    }
+
+    fn neg_query(&self) -> Option<&TSQuery>
+    where
+        Self: Sized,
+    {
+        self.nq.as_ref()
     }
 }
 
