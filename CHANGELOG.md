@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.0](https://github.com/alexpovel/srgn/compare/srgn-v0.13.1...srgn-v0.14.0) (2024-09-20)
+
+
+### Features
+
+* **cli:** Language shorthands (`--py` for `--python` etc.) ([f93093a](https://github.com/alexpovel/srgn/commit/f93093a7a5cfc214fa1d715d06642780a37f9faa))
+* **rust:** Scope `unsafe` code ([c67ff9e](https://github.com/alexpovel/srgn/commit/c67ff9e2eede9079dcdbe63c6c7ecca91ed9fd5a))
+
 ## [0.13.1](https://github.com/alexpovel/srgn/compare/srgn-v0.13.0...srgn-v0.13.1) (2024-08-18)
 
 
